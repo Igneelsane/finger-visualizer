@@ -3,213 +3,225 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Finger Audio FX</title>
+<title>Finger-Controlled Audio FX</title>
 <style>
-  html, body {
+  body {
     margin: 0;
-    padding: 0;
-    overflow: hidden;
     background: black;
     color: white;
     font-family: sans-serif;
+    overflow: hidden;
   }
-  #video {
-    position: fixed;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    object-fit: cover;
-    z-index: 0;
-  }
-  #visualizer {
-    position: fixed;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    z-index: 1;
-    pointer-events: none;
+  #visualizerCanvas {
+    position: absolute;
+    top: 0;
+    left: 0;
   }
   #controls {
     position: fixed;
-    top: 10px; left: 10px;
-    z-index: 2;
-    background: rgba(0,0,0,0.6);
+    top: 10px;
+    left: 10px;
+    background: rgba(0,0,0,0.5);
     padding: 10px;
     border-radius: 8px;
   }
-  button {
-    margin: 4px;
-    padding: 6px 12px;
-    cursor: pointer;
+  video {
+    display: none;
   }
 </style>
 </head>
 <body>
-
-<video id="video" autoplay muted playsinline></video>
-<canvas id="visualizer"></canvas>
-
+<video id="cameraFeed" autoplay playsinline></video>
+<canvas id="visualizerCanvas"></canvas>
 <div id="controls">
   <input type="file" id="audioFile" accept="audio/*" />
-  <input type="text" id="youtubeUrl" placeholder="YouTube/Spotify link" />
-  <button id="loadUrl">Load</button>
-  <button id="startBtn">Start Camera + Audio</button>
-  <button id="stopBtn">Stop</button>
+  <button id="stopBtn">Stop Audio & Camera</button>
 </div>
 
 <script type="module">
-import * as mpHands from "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js";
-import { Camera } from "https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js";
+import {
+  Hands,
+  HAND_CONNECTIONS
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js";
+import {
+  drawConnectors,
+  drawLandmarks
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js";
+import {
+  Camera
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js";
 
-// ====== GLOBALS ======
-let audioCtx, sourceNode, analyser, gainNode, reverb, delayNode, lowpass, highpass;
-let videoEl = document.getElementById('video');
-let canvas = document.getElementById('visualizer');
-let ctx = canvas.getContext('2d');
-let hands, camera;
-let audioBufferSource;
-let mediaStream;
+const videoEl = document.getElementById('cameraFeed');
+const canvas = document.getElementById('visualizerCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 
-// ====== AUDIO SETUP ======
-function setupAudioChain(buffer) {
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  sourceNode = audioCtx.createBufferSource();
-  sourceNode.buffer = buffer;
+let audioCtx, sourceNode, analyser, gainNode, convolver, delayNode, biquadFilter;
+let animationId;
+let currentEffect = null;
 
-  analyser = audioCtx.createAnalyser();
+function setupAudioNodes() {
+  audioCtx = new AudioContext();
   gainNode = audioCtx.createGain();
-
-  // FX nodes
-  reverb = audioCtx.createConvolver(); // needs IR file
+  analyser = audioCtx.createAnalyser();
+  convolver = audioCtx.createConvolver();
   delayNode = audioCtx.createDelay(5.0);
-  lowpass = audioCtx.createBiquadFilter();
-  lowpass.type = "lowpass";
-  lowpass.frequency.value = 5000;
-  highpass = audioCtx.createBiquadFilter();
-  highpass.type = "highpass";
-  highpass.frequency.value = 1000;
+  biquadFilter = audioCtx.createBiquadFilter();
 
-  // Default chain: source -> analyser -> gain -> destination
-  sourceNode.connect(analyser);
-  analyser.connect(gainNode);
-  gainNode.connect(audioCtx.destination);
-
-  sourceNode.start();
-  drawVisualizer();
+  gainNode.connect(analyser).connect(audioCtx.destination);
 }
 
-function toggleEffect(effect) {
-  // Disconnect all nodes first
+function applyEffect(effect) {
+  if (!sourceNode) return;
   sourceNode.disconnect();
-  analyser.disconnect();
-  gainNode.disconnect();
-  reverb.disconnect();
-  delayNode.disconnect();
-  lowpass.disconnect();
-  highpass.disconnect();
+  switch (effect) {
+    case 'reverb':
+      sourceNode.connect(convolver).connect(gainNode);
+      break;
+    case 'echo':
+      sourceNode.connect(delayNode).connect(gainNode);
+      break;
+    case 'lowpass':
+      biquadFilter.type = 'lowpass';
+      biquadFilter.frequency.value = 800;
+      sourceNode.connect(biquadFilter).connect(gainNode);
+      break;
+    case 'highpass':
+      biquadFilter.type = 'highpass';
+      biquadFilter.frequency.value = 1200;
+      sourceNode.connect(biquadFilter).connect(gainNode);
+      break;
+    case 'normal':
+      sourceNode.connect(gainNode);
+      break;
+    default:
+      sourceNode.connect(gainNode);
+  }
+  currentEffect = effect;
+}
 
-  sourceNode.connect(analyser);
-  analyser.connect(gainNode);
-
-  switch(effect) {
-    case 'reverb': analyser.connect(reverb).connect(audioCtx.destination); break;
-    case 'delay': analyser.connect(delayNode).connect(audioCtx.destination); break;
-    case 'lowpass': analyser.connect(lowpass).connect(audioCtx.destination); break;
-    case 'highpass': analyser.connect(highpass).connect(audioCtx.destination); break;
-    case 'normal': gainNode.connect(audioCtx.destination); break;
-    case 'slow': sourceNode.playbackRate.value = 0.8; break;
-    case 'fast': sourceNode.playbackRate.value = 1.2; break;
+function setPlaybackRate(rate) {
+  if (sourceNode && sourceNode.playbackRate) {
+    sourceNode.playbackRate.value = rate;
   }
 }
 
-// ====== CAMERA & HANDS ======
-async function startCamera() {
-  hands = new mpHands.Hands({
-    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-  });
-  hands.setOptions({
-    maxNumHands: 1,
-    minDetectionConfidence: 0.7,
-    minTrackingConfidence: 0.5
-  });
-  hands.onResults(onHands);
-
-  mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
-  videoEl.srcObject = mediaStream;
-
-  camera = new Camera(videoEl, {
-    onFrame: async () => { await hands.send({ image: videoEl }); },
-    width: 640, height: 480
-  });
-  camera.start();
-}
-
-// ====== HAND GESTURE DETECTION ======
-function onHands(results) {
-  if (!results.multiHandLandmarks.length) return;
-
-  let landmarks = results.multiHandLandmarks[0];
-
-  let pinch = (fingerTip, thumbTip) => {
-    let dx = landmarks[fingerTip].x - landmarks[thumbTip].x;
-    let dy = landmarks[fingerTip].y - landmarks[thumbTip].y;
-    return Math.hypot(dx, dy) < 0.05;
-  };
-
-  if (pinch(8,4)) toggleEffect('reverb');     // Index pinch
-  else if (pinch(12,4)) toggleEffect('delay'); // Middle pinch
-  else if (pinch(16,4)) toggleEffect('lowpass'); // Ring pinch
-  else if (pinch(20,4)) toggleEffect('highpass'); // Pinky pinch
-  else if (isOpenHand(landmarks)) toggleEffect('normal');
-  else if (isClosedFist(landmarks)) toggleEffect('slow');
-}
-
-function isOpenHand(lm) {
-  return lm[8].y < lm[6].y && lm[12].y < lm[10].y && lm[16].y < lm[14].y && lm[20].y < lm[18].y;
-}
-function isClosedFist(lm) {
-  return lm[8].y > lm[6].y && lm[12].y > lm[10].y && lm[16].y > lm[14].y && lm[20].y > lm[18].y;
-}
-
-// ====== VISUALIZER ======
-function drawVisualizer() {
-  requestAnimationFrame(drawVisualizer);
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-
-  let dataArray = new Uint8Array(analyser.frequencyBinCount);
-  analyser.getByteFrequencyData(dataArray);
-
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = 'rgba(255,255,255,0.2)';
-  let barWidth = (canvas.width / dataArray.length) * 2.5;
-  let x = 0;
-  for (let i = 0; i < dataArray.length; i++) {
-    let barHeight = dataArray[i];
-    ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
-    x += barWidth + 1;
-  }
-}
-
-// ====== CONTROLS ======
-document.getElementById('startBtn').onclick = () => { startCamera(); };
-document.getElementById('stopBtn').onclick = () => {
-  if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
-  if (audioCtx) audioCtx.close();
-};
-document.getElementById('audioFile').onchange = (e) => {
-  let file = e.target.files[0];
+document.getElementById('audioFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
   if (!file) return;
-  let reader = new FileReader();
-  reader.onload = async function() {
-    let buffer = await new AudioContext().decodeAudioData(reader.result);
-    setupAudioChain(buffer);
-  };
-  reader.readAsArrayBuffer(file);
-};
-document.getElementById('loadUrl').onclick = () => {
-  let url = document.getElementById('youtubeUrl').value;
-  alert("Direct YouTube/Spotify playback not supported due to CORS — download audio or use a file instead.");
-};
-</script>
+  if (!audioCtx) setupAudioNodes();
+  const arrayBuffer = await file.arrayBuffer();
+  const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+  if (sourceNode) sourceNode.stop();
+  sourceNode = audioCtx.createBufferSource();
+  sourceNode.buffer = audioBuffer;
+  applyEffect(currentEffect || 'normal');
+  sourceNode.start();
+});
 
+document.getElementById('stopBtn').addEventListener('click', () => {
+  if (sourceNode) sourceNode.stop();
+  if (camera) camera.stop();
+  if (animationId) cancelAnimationFrame(animationId);
+});
+
+function drawVisualizer() {
+  analyser.fftSize = 256;
+  const bufferLength = analyser.frequencyBinCount;
+  const dataArray = new Uint8Array(bufferLength);
+
+  function renderFrame() {
+    animationId = requestAnimationFrame(renderFrame);
+
+    ctx.globalAlpha = 1.0;
+    ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    analyser.getByteFrequencyData(dataArray);
+    const barWidth = (canvas.width / bufferLength) * 2.5;
+    let x = 0;
+    for (let i = 0; i < bufferLength; i++) {
+      const barHeight = dataArray[i];
+      ctx.fillStyle = 'hsl(' + (i / bufferLength) * 360 + ',100%,50%)';
+      ctx.fillRect(x, canvas.height - barHeight / 2, barWidth, barHeight / 2);
+      x += barWidth + 1;
+    }
+  }
+  renderFrame();
+}
+
+// Count extended fingers
+function countFingers(landmarks) {
+  const tips = [8, 12, 16, 20];
+  let count = 0;
+  // Thumb
+  if (landmarks[4].x < landmarks[3].x) count++;
+  for (let tip of tips) {
+    if (landmarks[tip].y < landmarks[tip - 2].y) count++;
+  }
+  return count;
+}
+
+function detectGesture(landmarks) {
+  const fingerCount = countFingers(landmarks);
+  if (fingerCount === 0) {
+    setPlaybackRate(0.5);
+  } else if (fingerCount === 1) {
+    applyEffect('reverb');
+  } else if (fingerCount === 2) {
+    applyEffect('echo');
+  } else if (fingerCount === 3) {
+    applyEffect('lowpass');
+  } else if (fingerCount === 4) {
+    applyEffect('highpass');
+  } else if (fingerCount === 5) {
+    applyEffect('normal');
+    setPlaybackRate(1.0);
+  }
+  // Thumbs up (special case: only thumb extended)
+  if (fingerCount === 1 && landmarks[4].y < landmarks[3].y) {
+    setPlaybackRate(2.0);
+  }
+}
+
+const hands = new Hands({
+  locateFile: (file) =>
+    `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+hands.setOptions({
+  maxNumHands: 1,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.7,
+  minTrackingConfidence: 0.7
+});
+hands.onResults((results) => {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.globalAlpha = 0.6;
+  ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+  ctx.globalAlpha = 1.0;
+
+  if (results.multiHandLandmarks.length > 0) {
+    for (const landmarks of results.multiHandLandmarks) {
+      drawConnectors(ctx, landmarks, HAND_CONNECTIONS,
+        { color: '#0ff', lineWidth: 2 });
+      drawLandmarks(ctx, landmarks, { color: '#f0f', lineWidth: 1 });
+      detectGesture(landmarks);
+    }
+  }
+});
+
+const camera = new Camera(videoEl, {
+  onFrame: async () => {
+    await hands.send({ image: videoEl });
+  },
+  width: 640,
+  height: 480
+});
+camera.start();
+drawVisualizer();
+</script>
 </body>
 </html>
