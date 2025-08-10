@@ -1,45 +1,50 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8">
-<title>Finger-Controlled Audio Visualizer</title>
-<style>
-  body {
-    margin: 0;
-    background: black;
-    overflow: hidden;
-    font-family: sans-serif;
-    color: white;
-    text-align: center;
-  }
-  #canvas {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-  }
-  #controls {
-    position: absolute;
-    top: 10px; left: 10px;
-    background: rgba(0,0,0,0.5);
-    padding: 10px; border-radius: 8px;
-    z-index: 5;
-  }
-  video {
-    display: none;
-  }
-  #gestureLabel {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    font-size: 2em;
-    color: #fff;
-    text-shadow: 0 0 15px #ff6b6b;
-    opacity: 0;
-    transition: opacity 0.5s ease;
-    pointer-events: none;
-  }
-</style>
+  <meta charset="UTF-8">
+  <title>Finger + Audio Reactive Visualizer</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: black;
+      font-family: sans-serif;
+      color: white;
+      text-align: center;
+    }
+    #controls {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+    }
+    video {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      opacity: 0.3;
+      z-index: -1;
+    }
+    canvas {
+      display: block;
+    }
+    #gestureLabel {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.5);
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 18px;
+      opacity: 0;
+      transition: opacity 0.5s ease;
+    }
+  </style>
 </head>
 <body>
 
@@ -47,9 +52,8 @@
   <input type="file" id="audioFile" accept="audio/*">
   <button id="stopBtn">Stop Audio & Camera</button>
 </div>
-
-<canvas id="canvas"></canvas>
-<video id="video" autoplay playsinline></video>
+<video id="webcam" autoplay playsinline muted></video>
+<canvas id="visualizer"></canvas>
 <div id="gestureLabel"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
@@ -57,164 +61,153 @@
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
 <script>
-const video = document.getElementById('video');
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
-const gestureLabel = document.getElementById('gestureLabel');
+let audioCtx, analyser, source, audioBufferSource, dataArray, bufferLength;
+let canvas = document.getElementById('visualizer');
+let ctx = canvas.getContext('2d');
+let videoEl = document.getElementById('webcam');
+let gestureLabel = document.getElementById('gestureLabel');
+let animationId;
+let mediaStream;
+let currentGesture = "";
+let gestureTimeout;
 
-let audioCtx, sourceNode, analyser, gainNode, delayNode, filterNode, convolver;
-let audioBuffer, audioPlaying = false;
-let currentGesture = null;
+// Resize canvas
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+// Start camera
+async function startCamera() {
+  mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
+  videoEl.srcObject = mediaStream;
+}
+startCamera();
 
-// Load audio from file
-document.getElementById('audioFile').addEventListener('change', async (e) => {
-  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const file = e.target.files[0];
+// Audio setup
+document.getElementById('audioFile').addEventListener('change', function(e) {
+  let file = e.target.files[0];
   if (!file) return;
-  const arrayBuffer = await file.arrayBuffer();
-  audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-  playAudio();
-});
+  let audioURL = URL.createObjectURL(file);
 
-function playAudio() {
-  if (sourceNode) sourceNode.disconnect();
-  sourceNode = audioCtx.createBufferSource();
-  sourceNode.buffer = audioBuffer;
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
 
-  gainNode = audioCtx.createGain();
-  delayNode = audioCtx.createDelay();
-  filterNode = audioCtx.createBiquadFilter();
-  convolver = audioCtx.createConvolver();
+  let audio = new Audio();
+  audio.src = audioURL;
+  audio.crossOrigin = "anonymous";
+  audio.autoplay = true;
+  audio.loop = true;
+
+  source = audioCtx.createMediaElementSource(audio);
   analyser = audioCtx.createAnalyser();
   analyser.fftSize = 256;
+  bufferLength = analyser.frequencyBinCount;
+  dataArray = new Uint8Array(bufferLength);
 
-  sourceNode.connect(gainNode);
-  gainNode.connect(delayNode);
-  delayNode.connect(filterNode);
-  filterNode.connect(convolver);
-  convolver.connect(analyser);
+  source.connect(analyser);
   analyser.connect(audioCtx.destination);
 
-  sourceNode.start();
-  audioPlaying = true;
+  audio.play();
+  draw();
+});
+
+document.getElementById('stopBtn').addEventListener('click', () => {
+  if (audioCtx) audioCtx.close();
+  if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+  cancelAnimationFrame(animationId);
+});
+
+// Draw visualizer
+function draw() {
+  animationId = requestAnimationFrame(draw);
+  analyser.getByteFrequencyData(dataArray);
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  let centerX = canvas.width / 2;
+  let centerY = canvas.height / 2;
+  let radius = 150;
+
+  ctx.beginPath();
+  for (let i = 0; i < bufferLength; i++) {
+    let value = dataArray[i];
+    let angle = (i / bufferLength) * Math.PI * 2;
+    let barLength = value * 0.8;
+    let x = centerX + Math.cos(angle) * (radius + barLength);
+    let y = centerY + Math.sin(angle) * (radius + barLength);
+    ctx.strokeStyle = `hsl(${i * 4}, 100%, 50%)`;
+    ctx.moveTo(centerX + Math.cos(angle) * radius, centerY + Math.sin(angle) * radius);
+    ctx.lineTo(x, y);
+  }
+  ctx.stroke();
 }
 
-// Stop button
-document.getElementById('stopBtn').addEventListener('click', () => {
-  if (sourceNode) sourceNode.stop();
-  audioPlaying = false;
-  if (video.srcObject) {
-    video.srcObject.getTracks().forEach(track => track.stop());
-  }
-});
-
-// Camera setup
-navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
-  video.srcObject = stream;
-});
-
-// MediaPipe Hands
+// Hand gesture detection
 const hands = new Hands({
-  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+  locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
 });
 hands.setOptions({
   maxNumHands: 1,
-  modelComplexity: 1,
   minDetectionConfidence: 0.7,
   minTrackingConfidence: 0.7
 });
 hands.onResults(onResults);
 
-const camera = new Camera(video, {
-  onFrame: async () => {
-    await hands.send({ image: video });
-  },
-  width: 640, height: 480
-});
-camera.start();
-
-// Gesture detection
 function onResults(results) {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!results.multiHandLandmarks.length) return;
 
-  // Draw blurred camera background
-  ctx.globalAlpha = 0.4;
-  ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-  ctx.globalAlpha = 1.0;
+  let landmarks = results.multiHandLandmarks[0];
+  let fingerCount = countFingers(landmarks);
+  let gestureName = mapFingersToEffect(fingerCount);
 
-  if (!audioPlaying) return;
-
-  // Visualizer
-  const bufferLength = analyser.frequencyBinCount;
-  const dataArray = new Uint8Array(bufferLength);
-  analyser.getByteFrequencyData(dataArray);
-
-  const centerX = canvas.width / 2;
-  const centerY = canvas.height / 2;
-  const radius = 150;
-  const bars = bufferLength;
-  const angleStep = (Math.PI * 2) / bars;
-
-  for (let i = 0; i < bars; i++) {
-    const value = dataArray[i] / 255;
-    const barHeight = value * 200;
-    const angle = i * angleStep;
-    const x1 = centerX + Math.cos(angle) * radius;
-    const y1 = centerY + Math.sin(angle) * radius;
-    const x2 = centerX + Math.cos(angle) * (radius + barHeight);
-    const y2 = centerY + Math.sin(angle) * (radius + barHeight);
-
-    const hue = (i / bars) * 360;
-    ctx.strokeStyle = `hsl(${hue}, 100%, 50%)`;
-    ctx.lineWidth = 3;
-    ctx.shadowBlur = 20;
-    ctx.shadowColor = `hsl(${hue}, 100%, 50%)`;
-
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
-    ctx.stroke();
+  if (gestureName !== currentGesture) {
+    currentGesture = gestureName;
+    showGestureLabel(gestureName);
   }
+}
 
-  // Count extended fingers
-  if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-    const lm = results.multiHandLandmarks[0];
-    const fingers = [8, 12, 16, 20].map(i => lm[i].y < lm[i - 2].y ? 1 : 0);
-    const thumb = lm[4].x < lm[3].x ? 1 : 0;
-    const total = fingers.reduce((a, b) => a + b, 0) + thumb;
+function countFingers(landmarks) {
+  let count = 0;
+  const tips = [8, 12, 16, 20]; // Index, Middle, Ring, Pinky
+  const pip = [6, 10, 14, 18];
+  for (let i = 0; i < tips.length; i++) {
+    if (landmarks[tips[i]].y < landmarks[pip[i]].y) count++;
+  }
+  if (landmarks[4].x < landmarks[3].x) count++; // Thumb
+  return count;
+}
 
-    // Map gestures
-    let gestureName;
-    if (total === 0) { gestureName = "Slow 0.5×"; sourceNode.playbackRate.value = 0.5; }
-    if (total === 1) { gestureName = "Reverb"; /* apply convolver IR */ }
-    if (total === 2) { gestureName = "Echo"; delayNode.delayTime.value = 0.25; }
-    if (total === 3) { gestureName = "Low-Pass"; filterNode.type = "lowpass"; filterNode.frequency.value = 1000; }
-    if (total === 4) { gestureName = "High-Pass"; filterNode.type = "highpass"; filterNode.frequency.value = 1000; }
-    if (total === 5) { gestureName = "Normal Speed"; sourceNode.playbackRate.value = 1.0; }
-
-    // Thumbs up
-    if (total === 1 && thumb === 1 && fingers.reduce((a,b)=>a+b,0) === 0) {
-      gestureName = "Speed 2×";
-      sourceNode.playbackRate.value = 2.0;
-    }
-
-    if (gestureName && gestureName !== currentGesture) {
-      currentGesture = gestureName;
-      showGestureLabel(gestureName);
-    }
+function mapFingersToEffect(count) {
+  switch (count) {
+    case 1: return "Effect: Echo";
+    case 2: return "Effect: Distortion";
+    case 3: return "Effect: Reverb";
+    case 4: return "Effect: Filter Sweep";
+    case 5: return "Effect: Visual Bloom";
+    default: return "Neutral";
   }
 }
 
 function showGestureLabel(text) {
   gestureLabel.textContent = text;
   gestureLabel.style.opacity = 1;
-  setTimeout(() => {
-    gestureLabel.style.opacity = 0;
-  }, 1500);
+  clearTimeout(gestureTimeout);
+  gestureTimeout = setTimeout(() => gestureLabel.style.opacity = 0, 2000);
 }
+
+// Run camera for hand detection
+const cam = new Camera(videoEl, {
+  onFrame: async () => {
+    await hands.send({ image: videoEl });
+  },
+  width: 640,
+  height: 480
+});
+cam.start();
 </script>
 </body>
 </html>
