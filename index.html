@@ -1,255 +1,634 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Finger + Audio Reactive Visualizer — Online Ready</title>
-  <style>
-    :root{--bg:#071022;--panel:#0f1724;--muted:#9aa7c0;--accent:#5eead4}
-    html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:var(--bg);color:#e6eef6}
-    .container{display:grid;grid-template-columns:1fr 360px;gap:12px;padding:12px;height:100%}
-    .left{position:relative;border-radius:12px;overflow:hidden;background:#000;box-shadow:0 8px 40px rgba(0,0,0,0.6)}
-    video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
-    canvas#overlay{position:absolute;left:0;top:0;pointer-events:none;transform:scaleX(-1)}
-    canvas#visual{position:absolute;left:0;top:0;pointer-events:none}
-    .panel{padding:14px;background:linear-gradient(180deg,var(--panel),#071022);border-radius:12px;color:var(--muted);display:flex;flex-direction:column;gap:10px}
-    h1{margin:0;font-size:16px;color:#e6eef6}
-    .row{display:flex;align-items:center;justify-content:space-between;gap:8px}
-    .small{font-size:13px;color:var(--muted)}
-    .pill{background:rgba(255,255,255,0.03);padding:8px;border-radius:8px}
-    .btn{background:#0b1320;color:var(--muted);padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.03);cursor:pointer}
-    pre{background:#071022;padding:8px;border-radius:8px;max-height:180px;overflow:auto;color:#cfeefe;font-size:13px}
-    footer{font-size:12px;color:#7f92a8}
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Audio Gesture Visualizer — System Audio, Upload, URL + Effects</title>
+<style>
+  :root{
+    --bg:#071023; --panel:#0f1726; --muted:#98a8c3; --accent:#6ee7b7;
+  }
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;background:var(--bg);color:#e8f0ff}
+  .layout{display:grid;grid-template-columns:1fr 360px;gap:12px;padding:12px;height:100vh}
+  .left{position:relative;border-radius:12px;overflow:hidden;background:#000;box-shadow:0 10px 40px rgba(0,0,0,0.6)}
+  video, canvas{width:100%;height:100%;object-fit:cover}
+  #camWrap{position:absolute;inset:0;pointer-events:none}
+  #overlay{position:absolute;left:0;top:0;pointer-events:none;transform:scaleX(-1)}
+  #visual{position:absolute;left:0;top:0;pointer-events:none}
+  .panel{padding:14px;background:linear-gradient(180deg,var(--panel),#071022);border-radius:12px;color:var(--muted);display:flex;flex-direction:column;gap:10px}
+  h1{margin:0;font-size:16px;color:#eaf4ff}
+  .row{display:flex;align-items:center;gap:8px}
+  .btn{background:#0b1320;color:var(--muted);padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.03);cursor:pointer}
+  .small{font-size:13px;color:var(--muted)}
+  .pill{background:rgba(255,255,255,0.03);padding:8px;border-radius:8px}
+  .separator{height:1px;background:rgba(255,255,255,0.03);margin:6px 0;border-radius:2px}
+  input[type="range"]{width:100%}
+  pre{background:#071022;padding:8px;border-radius:8px;color:#cfeefe;font-size:13px;max-height:140px;overflow:auto}
+  footer{font-size:12px;color:#7f92a8}
+  label{font-size:13px;color:#bcd3ea}
+</style>
 </head>
 <body>
-  <div class="container">
-    <div class="left">
-      <video id="video" autoplay playsinline></video>
-      <canvas id="overlay"></canvas>
-      <canvas id="visual"></canvas>
-      <!-- Three.js canvas will be injected when enabled -->
-      <div id="threeRoot" style="position:absolute;inset:0;pointer-events:none;display:none"></div>
-    </div>
-
-    <div class="panel">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <h1>Finger + Audio Reactive — Online Ready</h1>
-        <div class="small">Client-only • HTTPS required for camera/mic</div>
-      </div>
-
-      <div class="row"><div class="small">Gesture:</div><div id="gestureLabel" class="pill">—</div></div>
-      <div class="row"><div class="small">RMS (loudness):</div><div id="rmsLabel" class="pill">0</div></div>
-      <div class="row"><div class="small">Dominant freq (Hz):</div><div id="freqLabel" class="pill">—</div></div>
-
-      <div class="row">
-        <button id="startBtn" class="btn">Start (Camera + Mic)</button>
-        <button id="toggleAudio" class="btn">Toggle Mic</button>
-      </div>
-
-      <div class="row">
-        <div class="small">Mode:</div>
-        <select id="modeSelect" class="btn">
-          <option value="canvas">Canvas 2D visuals</option>
-          <option value="three">Three.js 3D particles</option>
-        </select>
-      </div>
-
-      <div class="row">
-        <div class="small">Calibration:</div>
-        <button id="calBtn" class="btn">Calibrate (visual & audio)</button>
-      </div>
-
-      <div>
-        <div class="small">Gesture→Effect Mapping (edit in code)</div>
-        <pre id="mapPreview"></pre>
-      </div>
-
-      <div>
-        <div class="small">Notes</div>
-        <ul style="margin:6px 0 0 18px;color:#9fb0d0">
-          <li>Browsers can't access system audio directly. Route system audio into mic or play audio aloud for analysis.</li>
-          <li>Deploy to GitHub Pages / Netlify / Vercel for HTTPS and easy online hosting.</li>
-        </ul>
-      </div>
-
-      <footer>Built with MediaPipe Hands + Web Audio API + Three.js (optional)</footer>
+<div class="layout">
+  <div class="left">
+    <!-- A visible video is optional (for camera overlay); we don't need to show the audio source video -->
+    <video id="video" autoplay playsinline style="display:none"></video>
+    <div id="camWrap">
+      <canvas id="overlay"></canvas> <!-- MediaPipe overlay -->
+      <canvas id="visual"></canvas>  <!-- audio-reactive visuals -->
     </div>
   </div>
 
-  <!-- Libs -->
-  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <div class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <h1>Audio Gesture Visualizer</h1>
+      <div class="small">Client-only • HTTPS required</div>
+    </div>
 
-  <script>
-  /* ---------- Configuration & UI ---------- */
-  const video = document.getElementById('video');
-  const overlay = document.getElementById('overlay');
-  const visual = document.getElementById('visual');
-  const overlayCtx = overlay.getContext('2d');
-  const visualCtx = visual.getContext('2d');
-  const threeRoot = document.getElementById('threeRoot');
+    <div class="row">
+      <button id="startCamBtn" class="btn">Start Camera (Gestures)</button>
+      <button id="startCaptureBtn" class="btn">Capture System Audio</button>
+    </div>
 
-  const gestureLabel = document.getElementById('gestureLabel');
-  const rmsLabel = document.getElementById('rmsLabel');
-  const freqLabel = document.getElementById('freqLabel');
-  const startBtn = document.getElementById('startBtn');
-  const toggleAudioBtn = document.getElementById('toggleAudio');
-  const calBtn = document.getElementById('calBtn');
-  const mapPreview = document.getElementById('mapPreview');
-  const modeSelect = document.getElementById('modeSelect');
+    <div class="row">
+      <input type="file" id="fileInput" accept="audio/*" />
+      <button id="pasteUrlBtn" class="btn">Load URL</button>
+    </div>
 
-  let cameraInstance = null;
-  let audioStream = null;
-  let audioCtx = null;
-  let analyser = null;
-  let dataArray = null;
-  let freqData = null;
-  let micEnabled = false;
+    <div class="separator"></div>
 
-  // Gesture mapping (editable)
-  const gestureMap = [
-    { gesture:'index',  condition:'loud',  effect:'particle', params:{intensity:1.8, color:'#ff6b6b'} },
-    { gesture:'index',  condition:'quiet', effect:'ripple',   params:{size:1.2, color:'#ffd56b'} },
-    { gesture:'middle', condition:'quiet', effect:'ripple',   params:{size:0.7, color:'#6be5ff'} },
-    { gesture:'middle', condition:'loud',  effect:'particle', params:{intensity:1.0, color:'#7c6bff'} },
-    { gesture:'thumbs', condition:'any',   effect:'colorShift',params:{palette:['#5eead4','#ff8fb1','#a78bfa']} },
-    { gesture:'pinch',  condition:'any',   effect:'pinchBurst',params:{color:'#fff',scale:1.2} },
-    { gesture:'open',   condition:'any',   effect:'softGlow',params:{color:'#7fffd4',strength:0.18} }
-  ];
-  mapPreview.textContent = JSON.stringify(gestureMap, null, 2);
+    <div class="small">Controls</div>
+    <div class="row"><div class="small">Sensitivity</div><input type="range" id="sensitivity" min="0.5" max="4" step="0.1" value="1.6"></div>
+    <div class="row"><div class="small">Visual Intensity</div><input type="range" id="intensity" min="0.2" max="3" step="0.1" value="1.0"></div>
 
-  /* ---------- Canvas resize helper ---------- */
-  function resizeCanvases(){
-    overlay.width = visual.width = video.videoWidth || 1280;
-    overlay.height = visual.height = video.videoHeight || 720;
-    if(window.threeRenderer){ window.threeRenderer.setSize(overlay.width, overlay.height); }
+    <div class="separator"></div>
+
+    <div class="small">Status</div>
+    <div class="row"><div class="small">Gesture:</div><div id="gestureLabel" class="pill">—</div></div>
+    <div class="row"><div class="small">RMS:</div><div id="rms" class="pill">0</div></div>
+    <div class="row"><div class="small">Mode:</div><div id="sourceMode" class="pill">none</div></div>
+
+    <div class="separator"></div>
+
+    <div class="row">
+      <button id="toggleReverb" class="btn">Reverb (Index)</button>
+      <button id="toggleEcho" class="btn">Echo (Middle)</button>
+    </div>
+
+    <div class="row">
+      <button id="resetBtn" class="btn">Reset (Open Palm)</button>
+      <button id="helpBtn" class="btn">Help</button>
+    </div>
+
+    <div class="separator"></div>
+
+    <div class="small">Notes</div>
+    <pre id="notes">Use "Capture System Audio" to share a browser tab or your system audio (Chrome supports tab audio capture). If you paste a media URL, it must allow CORS or the browser will block access. Uploading an audio file always works.</pre>
+
+    <footer>MediaPipe Hands + Web Audio API. Gestures toggle effects: Index=Reverb, Middle=Echo, ThumbsUp=SpeedUp, Pinch=SlowDown, OpenPalm=Reset.</footer>
+  </div>
+</div>
+
+<!-- Libs -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+<script>
+/* =========================
+   Audio Gesture Visualizer
+   - System/tab capture (getDisplayMedia)
+   - file upload & direct URL load (CORS permitting)
+   - WebAudio nodes: analyser, convolver (reverb), delay (echo), biquad (lowpass), gain
+   - playback control via playbackRate on a hidden HTMLAudioElement
+   - MediaPipe Hands for gestures
+   - visuals: spectrum bars + waveform + particle bursts
+   ========================= */
+
+const overlay = document.getElementById('overlay');
+const visual = document.getElementById('visual');
+const overlayCtx = overlay.getContext('2d');
+const visualCtx = visual.getContext('2d');
+
+const startCamBtn = document.getElementById('startCamBtn');
+const startCaptureBtn = document.getElementById('startCaptureBtn');
+const fileInput = document.getElementById('fileInput');
+const pasteUrlBtn = document.getElementById('pasteUrlBtn');
+const gestureLabel = document.getElementById('gestureLabel');
+const rmsLabel = document.getElementById('rms');
+const sourceMode = document.getElementById('sourceMode');
+const sensitivitySlider = document.getElementById('sensitivity');
+const intensitySlider = document.getElementById('intensity');
+const toggleReverbBtn = document.getElementById('toggleReverb');
+const toggleEchoBtn = document.getElementById('toggleEcho');
+const resetBtn = document.getElementById('resetBtn');
+const helpBtn = document.getElementById('helpBtn');
+const notes = document.getElementById('notes');
+
+let videoEl = document.createElement('video'); // for MediaPipe camera
+videoEl.style.display='none';
+videoEl.autoplay = true;
+videoEl.playsInline = true;
+document.body.appendChild(videoEl);
+
+// Hidden audio element to play uploaded / URL audio when available.
+// For system capture, we'll use the MediaStream directly.
+let audioEl = document.createElement('audio');
+audioEl.crossOrigin = "anonymous";
+audioEl.controls = false;
+audioEl.style.display = 'none';
+audioEl.loop = true;
+document.body.appendChild(audioEl);
+
+// WebAudio setup
+let audioCtx = null;
+let sourceNode = null;
+let analyser = null;
+let analyserFFT = 2048;
+let dataArray = null;
+let freqArray = null;
+
+// effect nodes
+let masterGain, reverbNode, convolverNode, delayNode, feedbackGain, lowpassNode;
+let playbackRateDefault = 1.0;
+let currentlyPlayingStream = null;
+let usingStreamSource = false; // true if using getDisplayMedia stream
+
+// UI state for effects
+let reverbOn = false;
+let echoOn = false;
+let slowActive = false;
+let fastActive = false;
+
+// Visual primitives
+let particles = [];
+function spawnParticles(x,y,color='#fff',intensity=1){
+  const count = Math.round(8 * intensity);
+  for(let i=0;i<count;i++){
+    particles.push({
+      x, y,
+      vx: (Math.random()-0.5)*8*intensity,
+      vy: (Math.random()-0.5)*8*intensity,
+      life: 30 + Math.random()*60,
+      r: 1 + Math.random()*3,
+      color
+    });
   }
-  video.addEventListener('loadeddata', resizeCanvases);
-  window.addEventListener('resize', resizeCanvases);
+}
 
-  /* ---------- WebAudio helpers ---------- */
-  async function startAudio(){
-    try{
-      audioStream = await navigator.mediaDevices.getUserMedia({ audio:true, video:false });
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const source = audioCtx.createMediaStreamSource(audioStream);
-      analyser = audioCtx.createAnalyser(); analyser.fftSize = 2048;
-      source.connect(analyser);
-      dataArray = new Uint8Array(analyser.fftSize);
-      freqData = new Uint8Array(analyser.frequencyBinCount);
-      micEnabled = true; toggleAudioBtn.textContent = 'Mute Mic';
-    }catch(e){console.error('audio start failed',e); alert('Microphone access denied or unavailable');}
+// Resize canvases to viewport
+function resize(){
+  const w = overlay.width = visual.width = Math.max(640, Math.floor(window.innerWidth * 0.66));
+  const h = overlay.height = visual.height = window.innerHeight - 24;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// -------- WebAudio init --------
+function ensureAudioContext(){
+  if(audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  masterGain = audioCtx.createGain(); masterGain.gain.value = 1.0;
+  analyser = audioCtx.createAnalyser(); analyser.fftSize = analyserFFT;
+  dataArray = new Uint8Array(analyser.fftSize);
+  freqArray = new Uint8Array(analyser.frequencyBinCount);
+
+  // Reverb (convolver) - use a generated impulse
+  convolverNode = audioCtx.createConvolver();
+  convolverNode.buffer = generateImpulseResponse(audioCtx, 2.0, 2.0); // 2s IR
+  reverbNode = convolverNode;
+
+  // Echo (delay + feedback)
+  delayNode = audioCtx.createDelay(); delayNode.delayTime.value = 0.25; // 250ms
+  feedbackGain = audioCtx.createGain(); feedbackGain.gain.value = 0.35;
+
+  // Lowpass (warmth / effect)
+  lowpassNode = audioCtx.createBiquadFilter(); lowpassNode.type = 'lowpass'; lowpassNode.frequency.value = 18000;
+
+  // routing: source -> (effects) -> analyser -> masterGain -> destination
+  // We'll connect dynamically depending on which effects are on
+  // For now connect analyser -> masterGain -> dest
+  analyser.connect(masterGain);
+  masterGain.connect(lowpassNode);
+  lowpassNode.connect(audioCtx.destination);
+
+  // add feedback loop for delay
+  delayNode.connect(feedbackGain);
+  feedbackGain.connect(delayNode);
+  // Connect delay into analyser chain when active (we'll manage)
+}
+
+// Generate a simple impulse response for reverb (exponential decay)
+function generateImpulseResponse(ctx, duration = 2.0, decay = 2.0) {
+  const sampleRate = ctx.sampleRate;
+  const length = sampleRate * duration;
+  const impulse = ctx.createBuffer(2, length, sampleRate);
+  for(let channel=0; channel<2; channel++){
+    const buf = impulse.getChannelData(channel);
+    for(let i=0;i<length;i++){
+      const t = i / sampleRate;
+      buf[i] = (Math.random()*2-1) * Math.pow(1 - t/duration, decay);
+    }
   }
-  function stopAudio(){ if(audioStream){ audioStream.getTracks().forEach(t=>t.stop()); audioStream=null; } if(audioCtx){ audioCtx.close(); audioCtx=null; } micEnabled=false; toggleAudioBtn.textContent='Unmute Mic'; }
-  toggleAudioBtn.addEventListener('click', ()=>{ if(!micEnabled) startAudio(); else stopAudio(); });
+  return impulse;
+}
 
-  function computeRMS(){ if(!analyser) return 0; analyser.getByteTimeDomainData(dataArray); let sum=0; for(let i=0;i<dataArray.length;i++){ const v=(dataArray[i]-128)/128; sum+=v*v; } return Math.sqrt(sum/dataArray.length); }
-  function computeDominantFrequency(){ if(!analyser) return 0; analyser.getByteFrequencyData(freqData); let max=-1, idx=-1; for(let i=0;i<freqData.length;i++){ if(freqData[i]>max){ max=freqData[i]; idx=i; } } const nyquist = (audioCtx && audioCtx.sampleRate) ? audioCtx.sampleRate/2 : 22050; return (idx / freqData.length) * nyquist; }
+// Connect a media stream as audio source (for getDisplayMedia)
+function connectStreamToAudio(stream){
+  ensureAudioContext();
+  disconnectSource();
+  usingStreamSource = true;
+  currentlyPlayingStream = stream;
+  sourceNode = audioCtx.createMediaStreamSource(stream);
+  // route: source -> analyser (and optionally delay/convolver etc.)
+  // For now connect source -> analyser
+  sourceNode.connect(analyser);
+  sourceNode.connect(delayNode); // keep delay input connected so echo works
+  // connect reverb path into analyser if reverb on
+  if(reverbOn){
+    sourceNode.connect(reverbNode);
+    reverbNode.connect(analyser);
+  }
+  if(echoOn){
+    sourceNode.connect(delayNode);
+    delayNode.connect(analyser);
+  }
+  sourceMode.textContent = 'system-capture';
+}
 
-  /* ---------- MediaPipe Hands setup ---------- */
-  const hands = new Hands({ locateFile: (file)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-  hands.setOptions({ maxNumHands:1, modelComplexity:1, minDetectionConfidence:0.6, minTrackingConfidence:0.5 });
-  hands.onResults(onHandsResults);
+// Connect an HTMLMediaElement (audioEl) to WebAudio
+function connectAudioElement(){
+  ensureAudioContext();
+  disconnectSource();
+  usingStreamSource = false;
+  sourceNode = audioCtx.createMediaElementSource(audioEl);
+  sourceNode.connect(analyser);
+  sourceNode.connect(delayNode);
+  // connect effects if active
+  if(reverbOn){ sourceNode.connect(reverbNode); reverbNode.connect(analyser); }
+  if(echoOn){ sourceNode.connect(delayNode); delayNode.connect(analyser); }
+  sourceMode.textContent = 'media-element';
+}
 
-  function startCamera(){ cameraInstance = new Camera(video, { onFrame: async ()=>{ await hands.send({image:video}); }, width:1280, height:720 }); cameraInstance.start(); }
+// Disconnect previous source cleanly
+function disconnectSource(){
+  try{
+    if(sourceNode){
+      try{ sourceNode.disconnect(); } catch(e){}
+      sourceNode = null;
+    }
+    if(currentlyPlayingStream){
+      // don't stop tracks automatically here — user may want them
+      currentlyPlayingStream = null;
+    }
+  }catch(e){ console.warn(e); }
+}
 
-  /* ---------- Gesture detection (extended: pinch, open palm, two-finger pinch) ---------- */
-  function detectGestures(lm){ if(!lm) return {index:false,middle:false,thumbs:false,pinch:false,open:false};
-    const idxTip=lm[8], idxPip=lm[6]; const midTip=lm[12], midPip=lm[10]; const thumbTip=lm[4], thumbIp=lm[3];
-    const indexExtended = idxTip.y + 0.01 < idxPip.y; const middleExtended = midTip.y + 0.01 < midPip.y;
-    const thumbUp = (thumbTip.y + 0.03 < thumbIp.y) && (thumbTip.x < lm[5].x + 0.08);
-    // pinch: distance between thumb tip and index tip small
-    const dx = (thumbTip.x - idxTip.x) * overlay.width; const dy=(thumbTip.y-idxTip.y)*overlay.height; const distThumbIndex = Math.hypot(dx,dy);
-    const pinch = distThumbIndex < Math.max(26, overlay.width*0.04);
-    // open palm: most fingers extended & spread
-    const fingers = [lm[8], lm[12], lm[16], lm[20]]; let extCount=0; for(const f of fingers){ if(f.y + 0.02 < lm[5].y) extCount++; }
-    const open = extCount >= 3;
-    return { index:indexExtended, middle:middleExtended, thumbs:thumbUp, pinch, open, raw:{idxTip,midTip,thumbTip} };
+// Toggle reverb
+function setReverb(on){
+  reverbOn = !!on;
+  ensureAudioContext();
+  if(!sourceNode) return;
+  // Reconnect nodes to include/exclude convolver
+  try{ sourceNode.disconnect(); }catch(e){}
+  if(usingStreamSource){
+    sourceNode.connect(analyser);
+    if(reverbOn){ sourceNode.connect(reverbNode); reverbNode.connect(analyser); }
+    if(echoOn){ sourceNode.connect(delayNode); delayNode.connect(analyser); }
+  } else {
+    sourceNode.connect(analyser);
+    if(reverbOn){ sourceNode.connect(reverbNode); reverbNode.connect(analyser); }
+    if(echoOn){ sourceNode.connect(delayNode); delayNode.connect(analyser); }
+  }
+  toggleReverbBtn.style.border = reverbOn ? '2px solid var(--accent)' : '';
+}
+
+// Toggle echo
+function setEcho(on){
+  echoOn = !!on;
+  ensureAudioContext();
+  if(!sourceNode) return;
+  try{ sourceNode.disconnect(); }catch(e){}
+  sourceNode.connect(analyser);
+  if(reverbOn){ sourceNode.connect(reverbNode); reverbNode.connect(analyser); }
+  if(echoOn){ sourceNode.connect(delayNode); delayNode.connect(analyser); }
+  toggleEchoBtn.style.border = echoOn ? '2px solid var(--accent)' : '';
+}
+
+// Playback rate helpers
+function setPlaybackRate(rate){
+  try{
+    if(audioEl){ audioEl.playbackRate = rate; }
+  }catch(e){}
+}
+
+// --------- Audio analysis helpers ----------
+function getRMS(){
+  if(!analyser) return 0;
+  analyser.getByteTimeDomainData(dataArray);
+  let sum = 0;
+  for(let i=0;i<dataArray.length;i++){
+    const v = (dataArray[i] - 128) / 128;
+    sum += v*v;
+  }
+  const rms = Math.sqrt(sum / dataArray.length);
+  return rms;
+}
+
+function getDominantFrequency(){
+  if(!analyser) return 0;
+  analyser.getByteFrequencyData(freqArray);
+  let maxVal = -1, idx = -1;
+  for(let i=0;i<freqArray.length;i++){
+    if(freqArray[i] > maxVal){ maxVal = freqArray[i]; idx = i; }
+  }
+  const nyquist = audioCtx ? audioCtx.sampleRate / 2 : 22050;
+  return (idx / freqArray.length) * nyquist;
+}
+
+// Visual rendering loop
+function renderVisuals(){
+  requestAnimationFrame(renderVisuals);
+  const w = visual.width, h = visual.height;
+  visualCtx.clearRect(0,0,w,h);
+
+  // waveform + spectrum
+  if(!analyser) return;
+
+  analyser.getByteTimeDomainData(dataArray);
+  analyser.getByteFrequencyData(freqArray);
+
+  // Draw waveform (center)
+  visualCtx.lineWidth = 2;
+  visualCtx.strokeStyle = 'rgba(200,230,255,0.9)';
+  visualCtx.beginPath();
+  const slice = Math.floor(dataArray.length / w);
+  for(let x=0;x<w;x++){
+    const v = dataArray[x * slice];
+    const y = (v / 255) * h;
+    if(x===0) visualCtx.moveTo(x, y);
+    else visualCtx.lineTo(x, y);
+  }
+  visualCtx.stroke();
+
+  // Draw spectrum bars at bottom
+  const bars = 64;
+  const barWidth = w / bars;
+  for(let i=0;i<bars;i++){
+    const bin = Math.floor(freqArray.length * i / bars);
+    const val = freqArray[bin] / 255;
+    const bh = val * (h * 0.35) * (parseFloat(intensitySlider.value) || 1);
+    const x = i * barWidth;
+    const y = h - bh;
+    const grd = visualCtx.createLinearGradient(x, y, x + barWidth, h);
+    grd.addColorStop(0, 'rgba(110,231,183,0.9)');
+    grd.addColorStop(1, 'rgba(120,150,255,0.9)');
+    visualCtx.fillStyle = grd;
+    visualCtx.fillRect(x, y, barWidth*0.9, bh);
+    // beat-trigger particle
+    if(val > 0.25 * (parseFloat(sensitivitySlider.value) || 1)){
+      spawnParticles(x + barWidth*0.5, y, 'rgba(255,255,255,0.9)', val * (parseFloat(intensitySlider.value)||1));
+    }
   }
 
-  /* ---------- Visual primitives (canvas) ---------- */
-  const particles=[]; const ripples=[]; let colorShiftIndex=0; let colorShiftPalette=['#5eead4','#ff8fb1','#a78bfa'];
-  function spawnParticles(x,y,color='#fff',intensity=1){ const count=Math.round(16*intensity); for(let i=0;i<count;i++){ particles.push({ x,y, vx:(Math.random()-0.5)*6*intensity, vy:(Math.random()-0.5)*6*intensity, life:60+Math.random()*40, r:2+Math.random()*4, color }); } }
-  function spawnRipple(x,y,color='#fff',maxSize=100){ ripples.push({ x,y, r:1, maxR:maxSize + Math.random()*maxSize, a:0.9, color }); }
-
-  function drawVisuals(){ visualCtx.clearRect(0,0,visual.width,visual.height);
-    for(let i=particles.length-1;i>=0;i--){ const p=particles[i]; p.x+=p.vx; p.y+=p.vy; p.life--; visualCtx.beginPath(); visualCtx.globalAlpha=Math.max(0,p.life/100); visualCtx.fillStyle=p.color; visualCtx.arc(p.x,p.y,p.r,0,Math.PI*2); visualCtx.fill(); if(p.life<=0) particles.splice(i,1); }
-    visualCtx.globalAlpha=1.0; for(let i=ripples.length-1;i>=0;i--){ const r=ripples[i]; r.r+=3; r.a*=0.98; visualCtx.beginPath(); visualCtx.lineWidth=3; visualCtx.strokeStyle=r.color; visualCtx.globalAlpha=r.a; visualCtx.arc(r.x,r.y,r.r,0,Math.PI*2); visualCtx.stroke(); if(r.r>r.maxR||r.a<0.02) ripples.splice(i,1); }
+  // particles update
+  for(let i=particles.length-1;i>=0;i--){
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy; p.life--;
+    visualCtx.globalAlpha = Math.max(0, p.life / 80);
+    visualCtx.fillStyle = p.color;
+    visualCtx.beginPath();
+    visualCtx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+    visualCtx.fill();
+    visualCtx.globalAlpha = 1.0;
+    if(p.life <= 0) particles.splice(i,1);
   }
 
-  /* ---------- Three.js setup (optional) ---------- */
-  function initThree(){
-    // basic points particle system that reacts to inputs
-    const width = overlay.width, height=overlay.height;
-    const scene = new THREE.Scene();
-    const camera3 = new THREE.PerspectiveCamera(60, width/height, 0.1, 1000); camera3.position.z = 200;
-    const renderer = new THREE.WebGLRenderer({ alpha:true }); renderer.setSize(width,height); renderer.domElement.style.position='absolute'; renderer.domElement.style.inset='0'; threeRoot.innerHTML=''; threeRoot.appendChild(renderer.domElement); threeRoot.style.display='block';
-    const geo = new THREE.BufferGeometry(); const count=1200; const pos = new Float32Array(count*3);
-    for(let i=0;i<count;i++){ pos[i*3] = (Math.random()-0.5)*width; pos[i*3+1] = (Math.random()-0.5)*height; pos[i*3+2] = (Math.random()-0.5)*200; }
-    geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
-    const mat = new THREE.PointsMaterial({ size:3, vertexColors:false, color:0xffffff, transparent:true, opacity:0.9 });
-    const points = new THREE.Points(geo, mat); scene.add(points);
+  // update status RMS
+  const rms = getRMS();
+  rmsLabel.textContent = rms.toFixed(3);
 
-    // simple animate closure
-    function render(){ requestAnimationFrame(render); renderer.render(scene,camera3); }
-    render();
-    // expose renderer to window for resize
-    window.threeRenderer = renderer; window.threeScene = scene; window.threeCamera = camera3; window.threePoints = points;
+  // gentle auto decay of playbackRate if temporary
+  if(fastActive || slowActive){
+    // keep for timed duration handled elsewhere
   }
-  function disposeThree(){ if(window.threeRenderer){ window.threeRenderer.domElement.remove(); delete window.threeRenderer; delete window.threeScene; delete window.threeCamera; delete window.threePoints; threeRoot.style.display='none'; } }
+}
+requestAnimationFrame(renderVisuals);
 
-  /* ---------- Main animation loop ---------- */
-  function animate(){ requestAnimationFrame(animate); drawVisuals(); if(window.threePoints){ // gentle pulse based on RMS
-      const rms = computeRMS(); window.threePoints.material.size = 2 + rms*20; window.threePoints.material.opacity = 0.6 + rms*2; }
+// ------ Media handling: capture system audio (getDisplayMedia) ------
+startCaptureBtn.addEventListener('click', async ()=>{
+  // getDisplayMedia will prompt user to choose a window/tab/screen. If the chosen source includes audio (tab audio),
+  // the returned stream has audio tracks we can feed into WebAudio.
+  try{
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    ensureAudioContext();
+    // sometimes stream contains both video + audio; we don't need video
+    connectStreamToAudio(stream);
+    sourceMode.textContent = 'system capture';
+    // If stream has an audio track but not linked to an <audio>, we can play it silently to allow direct playback in browsers that require user interaction.
+    // Create audio element to play captured stream for consistent handling.
+    audioEl.srcObject = stream;
+    audioEl.muted = true;
+    await audioEl.play().catch(()=>{ /* some browsers require user gesture */ });
+    usingStreamSource = true;
+  }catch(e){
+    alert('System audio capture failed or not supported. Note: Chrome supports tab capture; some browsers limit system audio capture.');
+    console.error(e);
   }
-  animate();
+});
 
-  /* ---------- Calibration: visual + audio ---------- */
-  const calibration = { indexY:null, middleY:null, rmsNeutral:null, done:false };
-  calBtn.addEventListener('click', ()=>{ calibration.indexY=null; calibration.middleY=null; calibration.rmsNeutral=null; calibration.done=false; calBtn.textContent='Calibrating... Hold neutral pose'; // capture after 2s
-    setTimeout(()=>{ if(calibration.indexY!==null && calibration.rmsNeutral!==null){ calibration.done=true; calBtn.textContent='Calibrated ✓'; } else { calBtn.textContent='Calibration failed — try again'; } }, 2000);
+// ------ File upload ------
+fileInput.addEventListener('change', async (ev)=>{
+  const file = ev.target.files && ev.target.files[0];
+  if(!file) return;
+  audioEl.srcObject = null;
+  audioEl.src = URL.createObjectURL(file);
+  audioEl.muted = false;
+  audioEl.loop = true;
+  await audioEl.play().catch(()=>{ /* await user gesture */ });
+  ensureAudioContext();
+  connectAudioElement();
+  sourceMode.textContent = 'uploaded-file';
+});
+
+// ------ Paste URL handling ------
+pasteUrlBtn.addEventListener('click', async ()=>{
+  const url = prompt('Paste a direct media URL (mp3/ogg/wav/m4a). YouTube/Spotify links usually cannot be directly loaded due to CORS. If you want to capture YouTube/Spotify, use "Capture System Audio" and pick the tab playing the media.');
+  if(!url) return;
+  audioEl.srcObject = null;
+  audioEl.src = url;
+  audioEl.crossOrigin = "anonymous";
+  audioEl.muted = false;
+  audioEl.loop = true;
+  try{
+    await audioEl.play();
+    ensureAudioContext();
+    connectAudioElement();
+    sourceMode.textContent = 'url';
+  }catch(e){
+    alert('Failed to play URL — CORS or browser restriction. Fallback: use file upload or system capture (recommended for YouTube/Spotify).');
+    console.error(e);
+  }
+});
+
+// -------- MediaPipe Hands for gestures --------
+const hands = new Hands({
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+hands.setOptions({
+  maxNumHands: 1,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.6,
+  minTrackingConfidence: 0.5
+});
+hands.onResults(onHandsResults);
+
+let camera = null;
+startCamBtn.addEventListener('click', ()=>{
+  if(camera){ // already started
+    return;
+  }
+  camera = new Camera(videoEl, {
+    onFrame: async ()=>{ await hands.send({image: videoEl}); },
+    width: 1280, height: 720
   });
+  camera.start();
+  startCamBtn.textContent = 'Camera Running';
+});
 
-  /* ---------- MediaPipe results handler ---------- */
-  function onHandsResults(results){ resizeCanvases(); overlayCtx.clearRect(0,0,overlay.width,overlay.height);
-    if(results.multiHandLandmarks && results.multiHandLandmarks.length>0){ const lm = results.multiHandLandmarks[0]; drawConnectors(overlayCtx, lm, HAND_CONNECTIONS, {color:'#6fb3ff', lineWidth:2}); drawLandmarks(overlayCtx, lm, {color:'#a6f0d6', lineWidth:1, radius:4}); const g = detectGestures(lm);
-      // calibration capture
-      if(!calibration.done && (calibration.indexY===null || calibration.rmsNeutral===null)){
-        // use averaged tips (simple) to set neutrals
-        calibration.indexY = lm[8].y; calibration.middleY = lm[12].y; calibration.rmsNeutral = computeRMS();
+// Utility: detect common gestures
+function detectGestures(lm){
+  if(!lm) return {index:false,middle:false,thumbs:false,pinch:false,open:false,raw:null};
+  const idxTip = lm[8], idxPip = lm[6];
+  const midTip = lm[12], midPip = lm[10];
+  const thumbTip = lm[4], thumbIp = lm[3];
+  // index/middle extended if tip above pip
+  const indexExtended = idxTip.y + 0.01 < idxPip.y;
+  const middleExtended = midTip.y + 0.01 < midPip.y;
+  const thumbUp = (thumbTip.y + 0.03 < thumbIp.y) && (thumbTip.x < lm[5].x + 0.08);
+  // pinch: thumb near index tip
+  const dx = (thumbTip.x - idxTip.x) * overlay.width, dy = (thumbTip.y - idxTip.y) * overlay.height;
+  const dist = Math.hypot(dx,dy);
+  const pinch = dist < Math.max(30, overlay.width * 0.04);
+  // open palm: at least 3 fingers extended
+  let extCount = 0;
+  const fingers = [lm[8], lm[12], lm[16], lm[20]];
+  for(const f of fingers){ if(f.y + 0.02 < lm[5].y) extCount++; }
+  const open = extCount >= 3;
+  return { index:indexExtended, middle:middleExtended, thumbs:thumbUp, pinch, open, raw:{idxTip, midTip, thumbTip} };
+}
+
+// gesture cooldowns/timers for temporary slow/fast
+let tempEffectTimeout = null;
+
+function onHandsResults(results){
+  // draw overlay landmarks
+  overlayCtx.clearRect(0,0,overlay.width,overlay.height);
+  if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0){
+    const lm = results.multiHandLandmarks[0];
+    drawConnectors(overlayCtx, lm, HAND_CONNECTIONS, {color:'#6fb3ff', lineWidth:2});
+    drawLandmarks(overlayCtx, lm, {color:'#a6f0d6', lineWidth:1, radius:4});
+    const g = detectGestures(lm);
+    // Update gesture UI
+    let gname = 'none';
+    if(g.index) gname = 'index';
+    if(g.middle) gname = 'middle';
+    if(g.thumbs) gname = 'thumbs';
+    if(g.pinch) gname = 'pinch';
+    if(g.open) gname = 'open';
+    gestureLabel.textContent = gname;
+
+    // Audio analysis RMS (used to detect "beats")
+    const rms = getRMS();
+
+    // Map gestures to effects:
+    // index: toggle reverb
+    if(g.index){
+      // toggle on rising edge - simple debounce using a small cooldown
+      if(!overlay._indexCooldown){
+        setReverb(!reverbOn);
+        overlay._indexCooldown = true;
+        setTimeout(()=>{ overlay._indexCooldown = false; }, 700);
       }
-
-      const rms = computeRMS(); const freq = audioCtx ? Math.round(computeDominantFrequency()) : 0; rmsLabel.textContent = rms.toFixed(3); freqLabel.textContent = freq?freq.toFixed(0)+' Hz':'—';
-      const LOUD_THRESHOLD = (calibration.rmsNeutral || 0.02) * 1.8; // adaptive
-      const isLoud = rms > LOUD_THRESHOLD ? 'loud' : 'quiet';
-      let gestureStr = 'none'; if(g.index) gestureStr='index'; if(g.middle) gestureStr='middle'; if(g.thumbs) gestureStr='thumbs'; if(g.pinch) gestureStr='pinch'; if(g.open) gestureStr='open'; gestureLabel.textContent = gestureStr + ' · ' + isLoud;
-
-      // trigger mapping
-      gestureMap.forEach(mapping=>{ if(mapping.gesture !== gestureStr) return; if(mapping.condition !== 'any' && mapping.condition !== isLoud) return; const sx = (()=>{ if(mapping.gesture==='index') return lm[8].x*overlay.width; if(mapping.gesture==='middle') return lm[12].x*overlay.width; if(mapping.gesture==='thumbs') return lm[4].x*overlay.width; if(mapping.gesture==='pinch') return (lm[4].x*0.5 + lm[8].x*0.5)*overlay.width; return overlay.width/2; })(); const sy = (()=>{ if(mapping.gesture==='index') return lm[8].y*overlay.height; if(mapping.gesture==='middle') return lm[12].y*overlay.height; if(mapping.gesture==='thumbs') return lm[4].y*overlay.height; if(mapping.gesture==='pinch') return (lm[4].y*0.5 + lm[8].y*0.5)*overlay.height; return overlay.height/2; })();
-
-        if(mapping.effect==='particle'){ spawnParticles(sx,sy,mapping.params.color || '#fff', mapping.params.intensity || 1); }
-        else if(mapping.effect==='ripple'){ spawnRipple(sx,sy,mapping.params.color || '#fff', 60*(mapping.params.size||1)); }
-        else if(mapping.effect==='colorShift'){ const pal = mapping.params.palette || colorShiftPalette; colorShiftPalette = pal; const col = pal[(colorShiftIndex++)%pal.length]; visualCtx.save(); visualCtx.globalAlpha = 0.08; visualCtx.fillStyle = col; visualCtx.fillRect(0,0,visual.width,visual.height); visualCtx.restore(); }
-        else if(mapping.effect==='pinchBurst'){ spawnParticles(sx,sy,mapping.params.color || '#fff', mapping.params.scale || 1); }
-        else if(mapping.effect==='softGlow'){ visualCtx.save(); visualCtx.globalAlpha = mapping.params.strength || 0.12; visualCtx.fillStyle = mapping.params.color || '#fff'; visualCtx.fillRect(0,0,visual.width,visual.height); visualCtx.restore(); }
-      });
-
-    } else { gestureLabel.textContent = 'no-hand'; }
+    }
+    // middle: toggle echo
+    if(g.middle){
+      if(!overlay._midCooldown){
+        setEcho(!echoOn);
+        overlay._midCooldown = true;
+        setTimeout(()=>{ overlay._midCooldown = false; }, 700);
+      }
+    }
+    // thumbs up: speed up temporarily
+    if(g.thumbs){
+      if(!fastActive){
+        fastActive = true;
+        setPlaybackRate(1.6);
+        spawnParticles(lm[4].x * overlay.width, lm[4].y * overlay.height, '#ffd56b', 2);
+        if(tempEffectTimeout) clearTimeout(tempEffectTimeout);
+        tempEffectTimeout = setTimeout(()=>{
+          setPlaybackRate(playbackRateDefault);
+          fastActive = false;
+        }, 1600);
+      }
+    }
+    // pinch: slow down temporarily
+    if(g.pinch){
+      if(!slowActive){
+        slowActive = true;
+        setPlaybackRate(0.7);
+        spawnParticles((lm[4].x+lm[8].x)*0.5 * overlay.width, (lm[4].y+lm[8].y)*0.5 * overlay.height, '#6be5ff', 1.8);
+        if(tempEffectTimeout) clearTimeout(tempEffectTimeout);
+        tempEffectTimeout = setTimeout(()=>{
+          setPlaybackRate(playbackRateDefault);
+          slowActive = false;
+        }, 1600);
+      }
+    }
+    // open palm: reset
+    if(g.open){
+      if(!overlay._openCooldown){
+        setReverb(false);
+        setEcho(false);
+        setPlaybackRate(playbackRateDefault);
+        overlay._openCooldown = true;
+        setTimeout(()=>{ overlay._openCooldown = false; }, 700);
+      }
+    }
+  } else {
+    gestureLabel.textContent = 'no-hand';
   }
+}
 
-  /* ---------- Entry & lifecycle ---------- */
-  startBtn.addEventListener('click', async ()=>{ startBtn.disabled=true; startBtn.textContent='Starting…'; try{ await startAudio(); startCamera(); startBtn.textContent='Running'; }catch(e){ console.error(e); startBtn.textContent='Start'; startBtn.disabled=false; } });
+// UI toggles
+toggleReverbBtn.addEventListener('click', ()=> setReverb(!reverbOn));
+toggleEchoBtn.addEventListener('click', ()=> setEcho(!echoOn));
+resetBtn.addEventListener('click', ()=>{ setReverb(false); setEcho(false); setPlaybackRate(playbackRateDefault); });
 
-  // mode switching to Three.js
-  modeSelect.addEventListener('change', (e)=>{ if(e.target.value==='three'){ initThree(); } else { disposeThree(); } });
+// Help
+helpBtn.addEventListener('click', ()=> alert(
+`How to use:
+- Use "Capture System Audio" to select a tab or window playing audio (Chrome best supports tab audio).
+- Or upload a local audio file (mp3/wav/ogg) or paste a direct media URL (must allow CORS).
+- Start Camera to enable gesture control.
+Gestures:
+- Index finger (extended) → toggle Reverb
+- Middle finger (extended) → toggle Echo
+- Thumbs up → temporary speed up
+- Pinch (thumb+index) → temporary slow down
+- Open palm → reset effects
+Notes: Browsers restrict capturing system audio on some platforms. Use Chrome and share the tab playing the music for best results.`));
 
-  // stop camera on unload
-  window.addEventListener('beforeunload', ()=>{ try{ if(cameraInstance) cameraInstance.stop(); stopAudio(); disposeThree(); }catch(e){} });
+// small safety: when user interacts with page, resume audio context if suspended
+document.addEventListener('click', ()=>{ if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); });
 
-  console.log('Online-ready prototype loaded. Deploy via GitHub Pages / Netlify / Vercel (HTTPS).');
-  </script>
+// allow toggling playback rate default via double-click on sourceMode (hidden simple control)
+sourceMode.addEventListener('dblclick', ()=>{
+  const r = parseFloat(prompt('Playback rate default (e.g., 1.0)', playbackRateDefault));
+  if(!isNaN(r) && r>0){ playbackRateDefault = r; setPlaybackRate(r); }
+});
+
+// End of script
+</script>
 </body>
 </html>
