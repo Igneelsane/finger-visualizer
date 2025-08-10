@@ -18,6 +18,8 @@
       left: 50%;
       transform: translateX(-50%);
       z-index: 10;
+      display: flex;
+      gap: 10px;
     }
     video {
       position: fixed;
@@ -50,7 +52,9 @@
 
 <div id="controls">
   <input type="file" id="audioFile" accept="audio/*">
-  <button id="stopBtn">Stop Audio & Camera</button>
+  <button id="playPauseBtn" disabled>Play Audio</button>
+  <button id="stopAudioBtn" disabled>Stop Audio</button>
+  <button id="toggleCameraBtn">Start Camera</button>
 </div>
 <video id="webcam" autoplay playsinline muted></video>
 <canvas id="visualizer"></canvas>
@@ -61,7 +65,8 @@
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
 <script>
-let audioCtx, analyser, source, audioBufferSource, dataArray, bufferLength;
+let audioCtx, analyser, source, dataArray, bufferLength;
+let audioElement;
 let canvas = document.getElementById('visualizer');
 let ctx = canvas.getContext('2d');
 let videoEl = document.getElementById('webcam');
@@ -70,8 +75,9 @@ let animationId;
 let mediaStream;
 let currentGesture = "";
 let gestureTimeout;
+let cam;
+let cameraRunning = false;
 
-// Resize canvas
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
@@ -79,14 +85,38 @@ function resizeCanvas() {
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
-// Start camera
+// Toggle camera
 async function startCamera() {
   mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
   videoEl.srcObject = mediaStream;
-}
-startCamera();
 
-// Audio setup
+  cam = new Camera(videoEl, {
+    onFrame: async () => {
+      await hands.send({ image: videoEl });
+    },
+    width: 640,
+    height: 480
+  });
+  cam.start();
+  cameraRunning = true;
+}
+
+function stopCamera() {
+  if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+  cameraRunning = false;
+}
+
+document.getElementById('toggleCameraBtn').addEventListener('click', () => {
+  if (cameraRunning) {
+    stopCamera();
+    document.getElementById('toggleCameraBtn').textContent = "Start Camera";
+  } else {
+    startCamera();
+    document.getElementById('toggleCameraBtn').textContent = "Stop Camera";
+  }
+});
+
+// Load audio
 document.getElementById('audioFile').addEventListener('change', function(e) {
   let file = e.target.files[0];
   if (!file) return;
@@ -96,13 +126,12 @@ document.getElementById('audioFile').addEventListener('change', function(e) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   }
 
-  let audio = new Audio();
-  audio.src = audioURL;
-  audio.crossOrigin = "anonymous";
-  audio.autoplay = true;
-  audio.loop = true;
+  audioElement = new Audio();
+  audioElement.src = audioURL;
+  audioElement.crossOrigin = "anonymous";
+  audioElement.loop = true;
 
-  source = audioCtx.createMediaElementSource(audio);
+  source = audioCtx.createMediaElementSource(audioElement);
   analyser = audioCtx.createAnalyser();
   analyser.fftSize = 256;
   bufferLength = analyser.frequencyBinCount;
@@ -111,14 +140,32 @@ document.getElementById('audioFile').addEventListener('change', function(e) {
   source.connect(analyser);
   analyser.connect(audioCtx.destination);
 
-  audio.play();
-  draw();
+  document.getElementById('playPauseBtn').disabled = false;
+  document.getElementById('stopAudioBtn').disabled = false;
 });
 
-document.getElementById('stopBtn').addEventListener('click', () => {
-  if (audioCtx) audioCtx.close();
-  if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
-  cancelAnimationFrame(animationId);
+// Play / Pause
+document.getElementById('playPauseBtn').addEventListener('click', () => {
+  if (!audioElement) return;
+  if (audioElement.paused) {
+    audioCtx.resume();
+    audioElement.play();
+    document.getElementById('playPauseBtn').textContent = "Pause Audio";
+    draw();
+  } else {
+    audioElement.pause();
+    document.getElementById('playPauseBtn').textContent = "Play Audio";
+  }
+});
+
+// Stop Audio
+document.getElementById('stopAudioBtn').addEventListener('click', () => {
+  if (audioElement) {
+    audioElement.pause();
+    audioElement.currentTime = 0;
+    cancelAnimationFrame(animationId);
+    document.getElementById('playPauseBtn').textContent = "Play Audio";
+  }
 });
 
 // Draw visualizer
@@ -146,7 +193,7 @@ function draw() {
   ctx.stroke();
 }
 
-// Hand gesture detection
+// MediaPipe hands
 const hands = new Hands({
   locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
 });
@@ -159,11 +206,9 @@ hands.onResults(onResults);
 
 function onResults(results) {
   if (!results.multiHandLandmarks.length) return;
-
   let landmarks = results.multiHandLandmarks[0];
   let fingerCount = countFingers(landmarks);
   let gestureName = mapFingersToEffect(fingerCount);
-
   if (gestureName !== currentGesture) {
     currentGesture = gestureName;
     showGestureLabel(gestureName);
@@ -172,12 +217,12 @@ function onResults(results) {
 
 function countFingers(landmarks) {
   let count = 0;
-  const tips = [8, 12, 16, 20]; // Index, Middle, Ring, Pinky
+  const tips = [8, 12, 16, 20];
   const pip = [6, 10, 14, 18];
   for (let i = 0; i < tips.length; i++) {
     if (landmarks[tips[i]].y < landmarks[pip[i]].y) count++;
   }
-  if (landmarks[4].x < landmarks[3].x) count++; // Thumb
+  if (landmarks[4].x < landmarks[3].x) count++;
   return count;
 }
 
@@ -198,16 +243,6 @@ function showGestureLabel(text) {
   clearTimeout(gestureTimeout);
   gestureTimeout = setTimeout(() => gestureLabel.style.opacity = 0, 2000);
 }
-
-// Run camera for hand detection
-const cam = new Camera(videoEl, {
-  onFrame: async () => {
-    await hands.send({ image: videoEl });
-  },
-  width: 640,
-  height: 480
-});
-cam.start();
 </script>
 </body>
 </html>
