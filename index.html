@@ -1,195 +1,124 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Finger-Controlled Audio FX</title>
+<meta charset="UTF-8">
+<title>Finger-Controlled Audio Visualizer</title>
 <style>
   body {
     margin: 0;
     background: black;
-    color: white;
-    font-family: sans-serif;
     overflow: hidden;
+    font-family: sans-serif;
+    color: white;
+    text-align: center;
   }
-  #visualizerCanvas {
+  #canvas {
     position: absolute;
-    top: 0;
-    left: 0;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
   }
   #controls {
-    position: fixed;
-    top: 10px;
-    left: 10px;
+    position: absolute;
+    top: 10px; left: 10px;
     background: rgba(0,0,0,0.5);
-    padding: 10px;
-    border-radius: 8px;
+    padding: 10px; border-radius: 8px;
+    z-index: 5;
   }
   video {
     display: none;
   }
+  #gestureLabel {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 2em;
+    color: #fff;
+    text-shadow: 0 0 15px #ff6b6b;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+    pointer-events: none;
+  }
 </style>
 </head>
 <body>
-<video id="cameraFeed" autoplay playsinline></video>
-<canvas id="visualizerCanvas"></canvas>
+
 <div id="controls">
-  <input type="file" id="audioFile" accept="audio/*" />
+  <input type="file" id="audioFile" accept="audio/*">
   <button id="stopBtn">Stop Audio & Camera</button>
 </div>
 
-<script type="module">
-import {
-  Hands,
-  HAND_CONNECTIONS
-} from "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js";
-import {
-  drawConnectors,
-  drawLandmarks
-} from "https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js";
-import {
-  Camera
-} from "https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js";
+<canvas id="canvas"></canvas>
+<video id="video" autoplay playsinline></video>
+<div id="gestureLabel"></div>
 
-const videoEl = document.getElementById('cameraFeed');
-const canvas = document.getElementById('visualizerCanvas');
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
+const gestureLabel = document.getElementById('gestureLabel');
+
+let audioCtx, sourceNode, analyser, gainNode, delayNode, filterNode, convolver;
+let audioBuffer, audioPlaying = false;
+let currentGesture = null;
+
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
-let audioCtx, sourceNode, analyser, gainNode, convolver, delayNode, biquadFilter;
-let animationId;
-let currentEffect = null;
-
-function setupAudioNodes() {
-  audioCtx = new AudioContext();
-  gainNode = audioCtx.createGain();
-  analyser = audioCtx.createAnalyser();
-  convolver = audioCtx.createConvolver();
-  delayNode = audioCtx.createDelay(5.0);
-  biquadFilter = audioCtx.createBiquadFilter();
-
-  gainNode.connect(analyser).connect(audioCtx.destination);
-}
-
-function applyEffect(effect) {
-  if (!sourceNode) return;
-  sourceNode.disconnect();
-  switch (effect) {
-    case 'reverb':
-      sourceNode.connect(convolver).connect(gainNode);
-      break;
-    case 'echo':
-      sourceNode.connect(delayNode).connect(gainNode);
-      break;
-    case 'lowpass':
-      biquadFilter.type = 'lowpass';
-      biquadFilter.frequency.value = 800;
-      sourceNode.connect(biquadFilter).connect(gainNode);
-      break;
-    case 'highpass':
-      biquadFilter.type = 'highpass';
-      biquadFilter.frequency.value = 1200;
-      sourceNode.connect(biquadFilter).connect(gainNode);
-      break;
-    case 'normal':
-      sourceNode.connect(gainNode);
-      break;
-    default:
-      sourceNode.connect(gainNode);
-  }
-  currentEffect = effect;
-}
-
-function setPlaybackRate(rate) {
-  if (sourceNode && sourceNode.playbackRate) {
-    sourceNode.playbackRate.value = rate;
-  }
-}
-
+// Load audio from file
 document.getElementById('audioFile').addEventListener('change', async (e) => {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   const file = e.target.files[0];
   if (!file) return;
-  if (!audioCtx) setupAudioNodes();
   const arrayBuffer = await file.arrayBuffer();
-  const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-  if (sourceNode) sourceNode.stop();
+  audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+  playAudio();
+});
+
+function playAudio() {
+  if (sourceNode) sourceNode.disconnect();
   sourceNode = audioCtx.createBufferSource();
   sourceNode.buffer = audioBuffer;
-  applyEffect(currentEffect || 'normal');
-  sourceNode.start();
-});
 
+  gainNode = audioCtx.createGain();
+  delayNode = audioCtx.createDelay();
+  filterNode = audioCtx.createBiquadFilter();
+  convolver = audioCtx.createConvolver();
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 256;
+
+  sourceNode.connect(gainNode);
+  gainNode.connect(delayNode);
+  delayNode.connect(filterNode);
+  filterNode.connect(convolver);
+  convolver.connect(analyser);
+  analyser.connect(audioCtx.destination);
+
+  sourceNode.start();
+  audioPlaying = true;
+}
+
+// Stop button
 document.getElementById('stopBtn').addEventListener('click', () => {
   if (sourceNode) sourceNode.stop();
-  if (camera) camera.stop();
-  if (animationId) cancelAnimationFrame(animationId);
+  audioPlaying = false;
+  if (video.srcObject) {
+    video.srcObject.getTracks().forEach(track => track.stop());
+  }
 });
 
-function drawVisualizer() {
-  analyser.fftSize = 256;
-  const bufferLength = analyser.frequencyBinCount;
-  const dataArray = new Uint8Array(bufferLength);
+// Camera setup
+navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+  video.srcObject = stream;
+});
 
-  function renderFrame() {
-    animationId = requestAnimationFrame(renderFrame);
-
-    ctx.globalAlpha = 1.0;
-    ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-
-    ctx.fillStyle = 'rgba(0,0,0,0.4)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    analyser.getByteFrequencyData(dataArray);
-    const barWidth = (canvas.width / bufferLength) * 2.5;
-    let x = 0;
-    for (let i = 0; i < bufferLength; i++) {
-      const barHeight = dataArray[i];
-      ctx.fillStyle = 'hsl(' + (i / bufferLength) * 360 + ',100%,50%)';
-      ctx.fillRect(x, canvas.height - barHeight / 2, barWidth, barHeight / 2);
-      x += barWidth + 1;
-    }
-  }
-  renderFrame();
-}
-
-// Count extended fingers
-function countFingers(landmarks) {
-  const tips = [8, 12, 16, 20];
-  let count = 0;
-  // Thumb
-  if (landmarks[4].x < landmarks[3].x) count++;
-  for (let tip of tips) {
-    if (landmarks[tip].y < landmarks[tip - 2].y) count++;
-  }
-  return count;
-}
-
-function detectGesture(landmarks) {
-  const fingerCount = countFingers(landmarks);
-  if (fingerCount === 0) {
-    setPlaybackRate(0.5);
-  } else if (fingerCount === 1) {
-    applyEffect('reverb');
-  } else if (fingerCount === 2) {
-    applyEffect('echo');
-  } else if (fingerCount === 3) {
-    applyEffect('lowpass');
-  } else if (fingerCount === 4) {
-    applyEffect('highpass');
-  } else if (fingerCount === 5) {
-    applyEffect('normal');
-    setPlaybackRate(1.0);
-  }
-  // Thumbs up (special case: only thumb extended)
-  if (fingerCount === 1 && landmarks[4].y < landmarks[3].y) {
-    setPlaybackRate(2.0);
-  }
-}
-
+// MediaPipe Hands
 const hands = new Hands({
-  locateFile: (file) =>
-    `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
 });
 hands.setOptions({
   maxNumHands: 1,
@@ -197,31 +126,95 @@ hands.setOptions({
   minDetectionConfidence: 0.7,
   minTrackingConfidence: 0.7
 });
-hands.onResults((results) => {
+hands.onResults(onResults);
+
+const camera = new Camera(video, {
+  onFrame: async () => {
+    await hands.send({ image: video });
+  },
+  width: 640, height: 480
+});
+camera.start();
+
+// Gesture detection
+function onResults(results) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.globalAlpha = 0.6;
+
+  // Draw blurred camera background
+  ctx.globalAlpha = 0.4;
   ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
   ctx.globalAlpha = 1.0;
 
-  if (results.multiHandLandmarks.length > 0) {
-    for (const landmarks of results.multiHandLandmarks) {
-      drawConnectors(ctx, landmarks, HAND_CONNECTIONS,
-        { color: '#0ff', lineWidth: 2 });
-      drawLandmarks(ctx, landmarks, { color: '#f0f', lineWidth: 1 });
-      detectGesture(landmarks);
+  if (!audioPlaying) return;
+
+  // Visualizer
+  const bufferLength = analyser.frequencyBinCount;
+  const dataArray = new Uint8Array(bufferLength);
+  analyser.getByteFrequencyData(dataArray);
+
+  const centerX = canvas.width / 2;
+  const centerY = canvas.height / 2;
+  const radius = 150;
+  const bars = bufferLength;
+  const angleStep = (Math.PI * 2) / bars;
+
+  for (let i = 0; i < bars; i++) {
+    const value = dataArray[i] / 255;
+    const barHeight = value * 200;
+    const angle = i * angleStep;
+    const x1 = centerX + Math.cos(angle) * radius;
+    const y1 = centerY + Math.sin(angle) * radius;
+    const x2 = centerX + Math.cos(angle) * (radius + barHeight);
+    const y2 = centerY + Math.sin(angle) * (radius + barHeight);
+
+    const hue = (i / bars) * 360;
+    ctx.strokeStyle = `hsl(${hue}, 100%, 50%)`;
+    ctx.lineWidth = 3;
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = `hsl(${hue}, 100%, 50%)`;
+
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+
+  // Count extended fingers
+  if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+    const lm = results.multiHandLandmarks[0];
+    const fingers = [8, 12, 16, 20].map(i => lm[i].y < lm[i - 2].y ? 1 : 0);
+    const thumb = lm[4].x < lm[3].x ? 1 : 0;
+    const total = fingers.reduce((a, b) => a + b, 0) + thumb;
+
+    // Map gestures
+    let gestureName;
+    if (total === 0) { gestureName = "Slow 0.5×"; sourceNode.playbackRate.value = 0.5; }
+    if (total === 1) { gestureName = "Reverb"; /* apply convolver IR */ }
+    if (total === 2) { gestureName = "Echo"; delayNode.delayTime.value = 0.25; }
+    if (total === 3) { gestureName = "Low-Pass"; filterNode.type = "lowpass"; filterNode.frequency.value = 1000; }
+    if (total === 4) { gestureName = "High-Pass"; filterNode.type = "highpass"; filterNode.frequency.value = 1000; }
+    if (total === 5) { gestureName = "Normal Speed"; sourceNode.playbackRate.value = 1.0; }
+
+    // Thumbs up
+    if (total === 1 && thumb === 1 && fingers.reduce((a,b)=>a+b,0) === 0) {
+      gestureName = "Speed 2×";
+      sourceNode.playbackRate.value = 2.0;
+    }
+
+    if (gestureName && gestureName !== currentGesture) {
+      currentGesture = gestureName;
+      showGestureLabel(gestureName);
     }
   }
-});
+}
 
-const camera = new Camera(videoEl, {
-  onFrame: async () => {
-    await hands.send({ image: videoEl });
-  },
-  width: 640,
-  height: 480
-});
-camera.start();
-drawVisualizer();
+function showGestureLabel(text) {
+  gestureLabel.textContent = text;
+  gestureLabel.style.opacity = 1;
+  setTimeout(() => {
+    gestureLabel.style.opacity = 0;
+  }, 1500);
+}
 </script>
 </body>
 </html>
